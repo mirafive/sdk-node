@@ -1,41 +1,30 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-11-08
 
-- Revenue events may carry `payment_id`, the payment provider's id of the payment (1–255 characters), next to `revenue` and `currency`. Nothing changes in the API: pass it in the properties. The README shows a Stripe example.
-- The default ingest host is `https://collect.mirafive.io`.
+A rewrite for the current MIRA FIVE platform: consent tiers, the revenue ledger, touchpoints and
+the `/v1/batch` wire format.
 
-- **Breaking:** feature flags and A/B experiments are removed. The
-  `@mirafive/sdk-server/flags` entry point (`MiraFlags`, `UserFlags`, `bootstrapHeaders`,
-  flag evaluation, exposures, SSR bootstrap and flag consent) no longer exists, and the `flags` size budget goes with it. Importing
-  `@mirafive/sdk-server/flags` now fails. Events, `identify()`, `send()`, consent modes
-  and retries are unchanged.
+### Added
 
-## 1.0.0 — 2026-09-27
+- `revenue()` with subscriptions, refunds, fees and tax; `touchpoint()`; `identify`
+  external ids (Stripe, RevenueCat, Shopify, Shopware); `eventIdFor`; batch sequence numbers;
+  reads `MIRAFIVE_SECRET_KEY`; refuses public keys; `MiraError.code`; `enabled: false`; typed
+  event maps; `await using`.
 
-Rebuilt from scratch on the v1 ingest protocol and the v1 flag spec.
+### Migrating from 1.x
 
-- `Mira`: buffered `track()` and `identify()` (100 events or 1 s, timers never keep a
-  process alive), `send()` with idempotency keys (batch id per PROTOCOL §5), `flush()`,
-  `shutdown()`, `with()` views sharing one buffer, typed events (types only).
-- Batches split at 1000 events and 1 MiB. Retries on 408, 429, 5xx, network errors and
-  timeouts with full-jitter backoff (250 ms · 2ⁿ, at most 4 s) and `Retry-After` held to
-  250 ms–30 s, resending the byte-identical body.
-- `waitUntil` receives every in-flight delivery; `onError` receives transport errors of
-  buffered events; `send()` rejects with `MiraError`.
-- Consentless mode refuses identifiers with a `TypeError`. Each event is validated against
-  the server's limits and serialised on `track()`; an invalid or unserialisable event is
-  dropped alone (`invalid_event`), and a `400 validation_failed` buffered batch is resent
-  once without the events it names. `flush()` never rejects. Batches dropped for
-  `ingestion_paused` or `allowance_exhausted` reach `onError`. `send()` takes `sentAt` and
-  honours `Retry-After` up to 120 s. Plain `http://` only for localhost. Refuses to run in
-  a browser.
-- `@mirafive/sdk-server/flags`: `MiraFlags` with ETag refresh on read (30 s, ±10 %
-  jitter, backoff to 5 minutes, stop on 401/403), a 7-day `document` snapshot, batched
-  segment lookups (100 units, 300 ms, one-minute cache), server-counted exposures
-  deduplicated per unit, variant and hour, and an escaped SSR `bootstrap()` block with
-  `bootstrapHeaders`. `for(unit, { waitUntil })` lets one instance serve every request of a
-  Workers isolate; `optedOut` for DNT/GPC; a flag the SDK cannot read answers the fallback
-  and is reported to `onError`.
-- The flag evaluator and batch ids pass the shared MIRA FIVE fixtures. Smoke-tested on
-  Node, Bun, Deno and workerd.
+- **Keys:** projects have a public key (`mira_pk_…`, browser and apps) and a secret key
+  (`mira_sk_…`, servers). `mf_…` website and secret keys are gone. Every SDK refuses the wrong
+  kind of key with a clear message.
+- **Host:** `https://events.mirafive.io` (was `collect.mirafive.io`).
+- **Environment:** `MIRAFIVE_SECRET_KEY` and `MIRAFIVE_HOST` on servers; the public key as
+  `NEXT_PUBLIC_MIRAFIVE_KEY`, `VITE_MIRAFIVE_KEY`, `PUBLIC_MIRAFIVE_KEY` (Astro),
+  `NUXT_PUBLIC_MIRAFIVE_KEY` or `MIRAFIVE_PUBLIC_KEY` (PHP templates).
+- **Consent:** there are no modes any more. The browser SDK follows the site's consent banner
+  (`consent: "auto"`) and collects what each tier allows: cookieless without consent, an
+  anonymous id with analytics consent, a user with `identify`. Server events carry the consent
+  they were collected under (default `not_applicable`).
+- **Revenue:** `revenue()` on the server SDKs, in integer minor units with an ISO currency,
+  `entryId` (replaces `payment_id`), `entryKind`, fees, tax, refunds and subscriptions. Revenue
+  properties on plain events are no longer read.

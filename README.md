@@ -1,278 +1,207 @@
-# @mirafive/sdk-server
+# @mirafive/node
 
-Send events from your server — Node, Bun, Deno, Cloudflare Workers, Vercel and other
-edge runtimes. Privacy-first analytics from MIRA FIVE, hosted in the EU.
+The MIRA FIVE server SDK for Node 20+, Bun, Deno, Cloudflare Workers, Vercel and other edge
+runtimes. It uses only `fetch`, Web Crypto and `AbortSignal.timeout`, and has no dependencies
+besides `@mirafive/protocol`.
 
-## Size
+Use it for what only your server knows: revenue (the server is the only place money may come
+from), a paid invoice, a plan change, a survey answer from your CRM, and backfills. Batching,
+retries and exactly-once event ids are built in. **The secret key stays on the server.**
 
-`@mirafive/sdk-server` is 3.48 kB (min + gzip). What you do not import is not shipped
-(`sideEffects: false`). No runtime dependencies.
+Using a framework? [`@mirafive/next`](https://github.com/mirafive/sdk-next) (`after()`),
+[`@mirafive/tanstack`](https://github.com/mirafive/sdk-tanstack) (middleware),
+[`@mirafive/nuxt`](https://github.com/mirafive/sdk-nuxt) (`useServerMira`) and
+[`@mirafive/convex`](https://github.com/mirafive/sdk-convex) (mutations) wrap this package.
 
 ## Install
 
 ```sh
-npm install @mirafive/sdk-server
-# or: bun add / pnpm add / yarn add / deno add npm:@mirafive/sdk-server
+npm install @mirafive/node   # or: bun add, pnpm add, yarn add
 ```
 
-Node ≥ 20, Bun, Deno, Cloudflare Workers (workerd), Vercel and Netlify edge functions.
-It uses only `fetch`, `crypto.subtle`, `crypto.randomUUID`, `AbortController`, timers and
-`TextEncoder`. ESM only.
+```sh
+# .env — the project's secret key, from the MIRA FIVE dashboard
+MIRAFIVE_SECRET_KEY=mira_sk_…
+```
 
-## Quickstart
+## Usage
 
 ```ts
-import { Mira } from "@mirafive/sdk-server"
+import { Mira, eventIdFor } from "@mirafive/node";
 
-const mira = new Mira({ key: process.env.MIRAFIVE_SECRET_KEY })
+// Reads MIRAFIVE_SECRET_KEY (and MIRAFIVE_HOST, if set). One client per process is enough.
+await using mira = new Mira({
+  onError: (error) => console.warn(error.code, error.message, error.eventIds),
+});
 
-mira.track("signup", { userId: user.id, properties: { plan: "pro" } })
-mira.identify(user.id, { plan: "pro" }, { anonymousId }) // anonymousId from the browser SDK, if you have it
+mira.identify({
+  userId: "user_42",
+  traits: { email: "ada@example.com", plan: "pro" },
+  // The same person in other systems, so connectors link their money to this user:
+  externalIds: { stripe_customer: "cus_123" }, // also revenuecat_app_user, shopify_customer, shopware_customer
+});
 
-await mira.flush() // before a short-lived process or function ends
+mira.group({ groupId: "acme", userId: "user_42", traits: { name: "Acme GmbH", seats: 12 } });
+
+mira.track({
+  event: "report_exported",
+  userId: "user_42",
+  properties: { format: "csv" },
+  context: { ip: request.ip, userAgent: request.headers["user-agent"] },
+});
+
+mira.revenue({
+  userId: "user_42",
+  amount: 1999, // minor units: 19.99 EUR
+  currency: "EUR",
+  entryId: "stripe:in_123", // the same money from the Stripe connector is counted once
+  eventId: await eventIdFor("order:123:paid"),
+});
+
+// A touchpoint that is not a visit: the models credit it like one (docs/attribution.md).
+mira.touchpoint({
+  kind: "survey", // also offline, code, custom
+  userId: "user_42",
+  source: "podcast", // or channel: "affiliate", "video", … (MIRA's channels)
+  answer: "The Elternzeit podcast",
+  eventId: await eventIdFor("survey:response_77"),
+});
+// `await using` flushes when the scope ends. Without it, call `await mira.shutdown()`.
 ```
 
-`track()` and `identify()` buffer: a batch leaves at 100 events or after one second.
-`send()` delivers at once and resolves to the server's receipt.
+- **Touchpoints:** `touchpoint` sends `$touchpoint` for what leaves no visit: a survey answer
+  ("How did you hear about us?"), an offline contact (a trade fair, a phone call), a redeemed
+  discount or partner code (`code`), or anything you model yourself (`custom`). It needs a `userId`
+  or `anonymousId` and a `channel` or a `source`; without a `channel`, `source`, `medium` and
+  `campaign` decide it like the UTMs of a link, the project's channel rules included. More fields:
+  `content` (the ad), `campaignId`, `adGroupId`, `adId`, `code`, `answer` (passes the PII guard)
+  and `externalRef` (your record, `hubspot:123`). A browser or app may send `survey` only.
 
-Verify it: send `$install_check`. It proves the key and host work and is never stored or
-billed.
+Every `revenue` call becomes one entry in the project's revenue ledger, keyed by `entryId` (sent
+twice, it counts once). Subscriptions, fees, tax and refunds are optional fields:
 
 ```ts
-const receipt = await mira.send([{ name: "$install_check" }])
-// { batch: "…", accepted: 0, dropped: 1, reason: "install_check" }
+// A subscription payment (the first one and every renewal), with store commission and VAT.
+mira.revenue({
+  userId: "user_42",
+  amount: 999,
+  currency: "EUR",
+  entryId: "revenuecat:txn_1000000123",
+  fee: 150, // processor fee or store commission
+  tax: 160, // VAT included in amount
+  product: "premium_monthly",
+  subscription: { id: "sub_42", interval: "month" }, // pays from now for one month
+});
+
+// A refund takes the money back, and the credit of the channels that earned it.
+mira.revenue({
+  userId: "user_42",
+  amount: -999,
+  currency: "EUR",
+  entryKind: "refund",
+  entryId: "revenuecat:txn_1000000123:refund",
+  refundOf: "revenuecat:txn_1000000123",
+});
 ```
 
-### Node, Bun, Deno
+- **`entryKind`:** `charge` (one-time, the default), `subscription_payment` (the default with
+  `subscription`), `refund` (the default for a negative amount), `dispute` and `dispute_won`.
+- **Proceeds** are the amount minus `fee` and `tax`; MRR comes from subscription payments and the
+  period each pays for (`interval`, `intervalCount`, or `periodStart` and `periodEnd`).
+- **Attribution:** a subscription payment inherits the credits of the person's acquisition (their
+  first conversion, sign-up, trial or first purchase, set per project), a refund those of the
+  money it takes back.
 
-Create one client per process and reuse it. Its flush timer does not keep the process
-alive, so flush before exiting:
+- **`track`, `identify`, `group`, `revenue` and `touchpoint` never throw.** Problems go to `onError` as a `MiraError` with
+  `status` and the affected `eventIds`.
+- **Batching:** a request goes out when `flushAt` events are waiting or every `flushIntervalMs`.
+  The timer does not keep the process alive; call `shutdown()` (or use `await using`) before exit.
+- **Retries:** network errors, 5xx, 408 and 429 are retried up to `maxRetries` times with
+  exponential backoff and jitter, honouring `retry-after`, always with the same event ids. Other
+  4xx answers are final.
+- **Sequence numbers:** every batch carries a random `stream` id per `Mira` instance and a `seq`
+  from 1 (a retry keeps its number), so the server can count lost batches.
+- **Context:** besides `ip`, `userAgent` and `page`, `context` takes `app` (`name`, `version`,
+  `build`), `locale`, `timezone` and `location` (`{ latitude, longitude }`, only one your app
+  already has and only with analytics consent; MIRA rounds it to 2 decimals). An invalid location
+  is dropped and reported; the event still goes out.
+- **Once only:** pass `eventId` to report one fact from several places (browser and server, or a
+  job that may run twice). `eventIdFor("order:123:paid")` makes a stable UUID from your own key.
+- **Backfills:** `timestamp` accepts past dates (`Date`, ISO string or epoch ms).
+- **Consent:** defaults to `not_applicable` (server-only facts). For events that describe what a
+  visitor did, pass what your banner recorded: `consent: { analytics: true, marketing: false }`.
+
+## What is collected at each consent tier
+
+| `consent` on the event                           | Tier    | What MIRA keeps                                                                               |
+| ------------------------------------------------ | ------- | --------------------------------------------------------------------------------------------- |
+| `not_applicable` (default), no `userId`          | T1      | The event, `anonymous_id` if given, geo from `context.ip` (the IP is discarded)               |
+| `not_applicable` with `userId`                   | T2      | Plus `user_id`, traits (PII traits encrypted at rest), revenue per person                     |
+| `{ analytics: 'granted' }`                       | T1 / T2 | As above                                                                                      |
+| `{ analytics: 'granted', marketing: 'granted' }` | T3      | Plus click ids, and later forwarding to ad platforms                                          |
+| `{ analytics: 'denied' \| 'unknown' }`           | T0      | No `user_id`, `anonymous_id` or `session_id`: the event counts, but is not linked to a person |
+
+## Options
+
+| Option            | Default                                            | Meaning                                                                                   |
+| ----------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `secretKey`       | `MIRAFIVE_SECRET_KEY`                              | The project's secret key (`mira_sk_…`). A public key is refused.                          |
+| `host`            | `MIRAFIVE_HOST`, else `https://events.mirafive.io` | The ingest origin.                                                                        |
+| `enabled`         | `true`                                             | `false` sends nothing and needs no key; input is still checked. For tests and local runs. |
+| `flushAt`         | `50`                                               | Send when this many events wait (at most 100).                                            |
+| `flushIntervalMs` | `2000`                                             | Send waiting events at least this often.                                                  |
+| `maxRetries`      | `5`                                                | Retries per batch for network errors, 408, 429 and 5xx.                                   |
+| `timeoutMs`       | `10000`                                            | Per request.                                                                              |
+| `onError`         | `console.error`                                    | Receives every `MiraError`.                                                               |
+| `fetch`           | global `fetch`                                     | For tests and proxies.                                                                    |
+
+`MiraError.code` says what happened: `config` (missing or wrong key), `invalid_input` (an event
+was not queued; the message names the field), `rejected` (the ingest refused single events),
+`dropped` (a batch was given up), `queue_full`, `shut_down`.
+
+## Checking the setup
 
 ```ts
-process.on("SIGTERM", async () => {
-  await mira.shutdown()
-  process.exit(0)
-})
+await new Mira().checkConnection(); // { key: "secret" }, or a MiraError that says what to fix
 ```
 
-In a script or CLI, `await mira.flush()` (or `shutdown()`) at the end. Deno needs
-`--allow-net` for the host (and `--allow-env` to read the key from the environment).
+It asks the ingest whether the key works (`GET /v1/check`) and sends no event, so it is safe in
+a deploy check or a health endpoint. It is the only method that throws.
 
-### Cloudflare Workers
-
-Keep one `Mira` per isolate, shared by every request. Hand each request's events to that
-request's `ctx.waitUntil(mira.flush())`.
+## Typed events
 
 ```ts
-import { Mira } from "@mirafive/sdk-server"
-
-let mira: Mira | undefined
-
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    mira ??= new Mira({ key: env.MIRAFIVE_SECRET_KEY })
-
-    mira.track("api_call", { properties: { path: new URL(request.url).pathname } })
-    ctx.waitUntil(mira.flush())
-
-    return new Response("ok")
-  }
-}
+const mira = new Mira<{ report_exported: { format: "csv" | "pdf" } }>();
+mira.track({ event: "report_exported", userId: "user_42", properties: { format: "csv" } });
 ```
 
-A client used by one request only can take `waitUntil` in its constructor instead:
-`new Mira({ key, waitUntil: (p) => ctx.waitUntil(p) })`.
+## Serverless and edge
 
-### Vercel functions
+The client batches in the background. In a serverless function, send before the function
+returns: `await mira.flush()` at the end of the handler, or hand the promise to the platform's
+`waitUntil` (`ctx.waitUntil(mira.flush())`). Long-running servers need nothing but a
+`shutdown()` on exit.
 
-```ts
-import { waitUntil } from "@vercel/functions"
-import { Mira } from "@mirafive/sdk-server"
+## For AI coding assistants
 
-const mira = new Mira({ key: process.env.MIRAFIVE_SECRET_KEY, waitUntil })
-```
+Rules for integrating MIRA FIVE correctly. They hold for every MIRA FIVE SDK.
 
-### Next.js route handlers and server actions
-
-Flush after the response with `after()`:
-
-```ts
-// app/api/checkout/route.ts
-import { after } from "next/server"
-import { Mira } from "@mirafive/sdk-server"
-
-const mira = new Mira({ key: process.env.MIRAFIVE_SECRET_KEY })
-
-export async function POST(request: Request): Promise<Response> {
-  const order = await createOrder(request)
-
-  mira.track("order completed", {
-    userId: order.customerId,
-    properties: { revenue: order.total, currency: "EUR" }
-  })
-  after(() => mira.flush())
-
-  return Response.json(order)
-}
-```
-
-`@mirafive/sdk-next/server` wraps exactly this as `mira()`.
-
-### Serverless flushing, in short
-
-A function that returns before its events are delivered loses them. Pick one:
-
-- pass `waitUntil` (Workers `ctx.waitUntil`, `@vercel/functions`, Netlify `context.waitUntil`):
-  every delivery, including the one the flush timer will start, is handed to it;
-- or call `after(() => mira.flush())` in Next.js;
-- or `await mira.flush()` before returning.
-
-### Idempotent sends
-
-Webhooks and jobs are delivered twice sometimes. Name the batch after what it is about and
-a repeat is stored and billed once:
-
-```ts
-await mira.send(
-  [{ name: "order completed", userId: order.customerId, properties: { revenue: 129, currency: "EUR" } }],
-  { idempotencyKey: `order-${order.id}` }
-)
-```
-
-The batch id is derived from the key (`UUIDv8(SHA-256("mirafive:batch:" + key))`, PROTOCOL
-§5), so every MIRA FIVE SDK maps the same key to the same batch. The server deduplicates
-for a day. Retries always resend the byte-identical body. To resend byte-identically from
-another process (a durable outbox, sdk-convex), also fix each event's `time` and pass
-`sentAt`: `send(events, { idempotencyKey, sentAt })`.
-
-## Consent & privacy
-
-- Default mode: `full`. Server events carry the identifiers you pass (`userId`,
-  `anonymousId`, `sessionId`); you, the customer, hold the consent or other lawful basis
-  for them. Use your own pseudonymous user id, never an email address.
-- `mode: "consentless"` counts without identifiers (revenue, invoices, anonymous totals).
-  Passing `userId`, `anonymousId` or `sessionId` then throws a `TypeError`: it is a
-  programming error, and the server would refuse the whole batch.
-- Nothing is stored.
-- The secret key never reaches a browser: `new Mira()` throws where `window` and
-  `document` exist.
-
-## API reference
-
-### `@mirafive/sdk-server`
-
-`new Mira<Events>(options)`
-
-| Option | Default | |
-|---|---|---|
-| `key` | — | the source's secret key, `process.env.MIRAFIVE_SECRET_KEY` |
-| `host` | `https://collect.mirafive.io` | `https://`; plain `http://` only for localhost, 127.0.0.1 and [::1]. An empty string means the default |
-| `mode` | `"full"` | or `"consentless"` |
-| `flushAt` | `100` | 1–1000 events per buffered batch |
-| `flushAfterMs` | `1000` | how long an event waits in the buffer |
-| `timeoutMs` | `10000` | per request |
-| `maxRetries` | `3` | on 408, 429, 5xx, network errors and timeouts |
-| `fetch` | global `fetch` | a custom transport |
-| `waitUntil` | — | receives every in-flight delivery |
-| `onError` | `console.warn` | failures of buffered events: transport errors, refused (`invalid_event`) events, and batches the server dropped for `ingestion_paused` or `allowance_exhausted` |
-
-| Member | |
-|---|---|
-| `track(name, { userId?, anonymousId?, sessionId?, properties?, time?, page?, id? })` | buffer an event; `time` is a `Date`, epoch ms or an ISO string, default now; `id` a UUID of your own |
-| `identify(userId, traits?, { anonymousId? })` | buffer `$identify` |
-| `send(events, { idempotencyKey?, signal?, sentAt? }): Promise<Receipt>` | 1–1000 events as one batch, now; rejects with `MiraError`; honours `Retry-After` up to 120 s |
-| `flush(): Promise<void>` | send the buffer and wait for every delivery; never rejects |
-| `shutdown(): Promise<void>` | flush and stop; later events go to `onError` |
-| `with({ userId?, anonymousId?, properties? }): Mira` | a view whose events carry these; shares the buffer |
-
-`Receipt` is `{ batch, accepted, dropped, reason? }`; `dropped > 0` with a `reason`
-(`bot`, `install_check`, `ingestion_paused`, `allowance_exhausted`) means nothing was kept.
-
-`MiraError extends Error`: `code`, `status?`, `retryable`, `retryAfterMs?`, `errors?`.
-Codes are the server's (`validation_failed`, `unauthorized`, `rate_limited`, …) plus
-`network_error`, `timeout`, `aborted`, `invalid_event` (refused before sending) and
-`unexpected` (an answer without a code).
-
-Typed events are types only: `new Mira<{ signup: { plan: "free" | "pro" } }>(…)` narrows
-the names and properties of `track()` and `send()`.
-
-Types: `MiraOptions`, `EventOptions`, `SendEvent`, `SendOptions`, `Scope`, `Events`,
-`Receipt`, `Mode`, `Page`, `Json`, `MiraErrorCode`, `Fetch`.
-
-## Framework / runtime notes
-
-- Every event is checked and serialised when you call `track()`, against the server's
-  limits (name ≤ 128 characters, ids ≤ 256, page URL/referrer ≤ 2048 and title ≤ 512,
-  properties ≤ 64 values, ≤ 5 levels, keys ≤ 128 characters, ≤ 32 KB as the server
-  encodes them). An event that fails, or whose properties are not JSON (a `BigInt`, a
-  cycle), is dropped alone and reported as `invalid_event`; the rest of the batch goes.
-- If the server still refuses a buffered batch (`400 validation_failed`), the events it
-  names are dropped and the rest is sent once more under a batch id derived from the first.
-- Buffered deliveries honour `Retry-After` up to 30 s, `send()` up to 120 s.
-
-- Framework packages build on this one: `@mirafive/sdk-next/server`,
-  `@mirafive/sdk-tanstack/start`, the Nuxt and Astro server utilities.
-
-## Troubleshooting
-
-| Symptom | Cause and fix |
-|---|---|
-| Nothing arrives | The function ended before delivery: pass `waitUntil`, use `after()` or `await mira.flush()`. Check `onError` and the host. |
-| `403 secret_key_exposed` | The key was sent with an `Origin` or `Sec-Fetch-Site` header, i.e. from a browser. Rotate it and keep it server-side. |
-| `403 website_key_as_bearer` | You passed the website key; server sources need the secret key. |
-| `400 collection_mode_not_allowed` | The source is consentless and you send `mode: "full"`. |
-| `TypeError: consentless mode …` | Identifiers in consentless mode; remove them or switch the mode. |
-| `invalid_event` in `onError` | The event breaks a server limit (see runtime notes) or its properties are not JSON; it was dropped before sending, the others were sent. |
-| `ingestion_paused` / `allowance_exhausted` in `onError` | The server accepted the batch but kept nothing: the organization is paused or out of allowance. |
-
-## For AI agents
-
-Copy-paste setup prompt:
-
-```text
-Add MIRA FIVE server-side analytics with @mirafive/sdk-server.
-1. Install @mirafive/sdk-server with the project's package manager.
-2. Read the secret key from the env var MIRAFIVE_SECRET_KEY (add MIRAFIVE_SECRET_KEY= to .env.example).
-   It is server-only: never import this package or the key into client components or a browser bundle.
-3. Create one client in a server-only module: `export const mira = new Mira({ key: process.env.MIRAFIVE_SECRET_KEY })`
-   (on Cloudflare Workers: one per isolate from `env`, then `ctx.waitUntil(mira.flush())` per request).
-4. Track the few business events that matter where they happen on the server, e.g.
-   `mira.track("signup", { userId: user.id, properties: { plan } })`, and
-   `mira.identify(user.id, { plan })` after signup/login. Use the internal user id, never an email.
-   For webhooks, use `await mira.send([...], { idempotencyKey: event.id })`.
-5. Make sure events leave before the function ends: pass `waitUntil` (Vercel: from @vercel/functions),
-   or `after(() => mira.flush())` in Next.js, or `await mira.flush()`; call `await mira.shutdown()` on SIGTERM.
-6. Server events are "full" mode by default: the app holds consent. For anonymous counts only, use
-   `mode: "consentless"` and pass no userId/anonymousId/sessionId.
-7. Verify: run `await mira.send([{ name: "$install_check" }])` once and check the receipt's
-   reason is "install_check". Report what you changed.
-Do not add other analytics libraries, cookies or consent banners.
-```
-
-Facts for agents:
-
-- Imports: `import { Mira, MiraError } from "@mirafive/sdk-server"`.
-- Env vars: `MIRAFIVE_SECRET_KEY` (server only, required), `MIRAFIVE_HOST` (optional,
-  default `https://collect.mirafive.io`). The package does not read env vars itself: pass
-  `key: process.env.MIRAFIVE_SECRET_KEY` (`env.MIRAFIVE_SECRET_KEY` on Workers).
-- Never ship `MIRAFIVE_SECRET_KEY` or this package to a browser bundle; a secret key
-  seen from a browser is refused and marked exposed. Browsers use `@mirafive/sdk-browser`
-  with `MIRAFIVE_WEBSITE_KEY`.
-- On serverless and edge runtimes always pass `waitUntil`, use `after(() => mira.flush())`
-  or `await mira.flush()`; otherwise buffered events are lost when the function ends.
-- `track()`/`identify()` never throw for transport reasons; failures go to `onError`.
-  `send()` rejects with `MiraError`. Identifiers in consentless mode throw `TypeError`.
-- Event names starting with `$` are reserved; use plain names like `order completed`.
-  Revenue goes in `properties: { revenue: 49.9, currency: "EUR" }`. Add `payment_id`
-  (1–255 characters) with the payment provider's id of the payment. For Stripe pass the
-  PaymentIntent id (`pi_…`) from your webhook, for example
-  `properties: { revenue: 49.9, currency: "EUR", payment_id: paymentIntent.id }`.
-  MIRA FIVE merges the event with the payment it imports from your connected Stripe
-  account, so the sale counts once.
-- Verify an install with `await mira.send([{ name: "$install_check" }])`: the receipt has
-  `reason: "install_check"`; it is never stored or billed.
-- Wire contract: [mirafive/protocol](https://github.com/mirafive/protocol).
-
-## License
-
-[MIT](LICENSE) © 2026 Cloo GmbH
+- **Keys:** the public key (`mira_pk_…`) goes in browser and app code. The secret key (`mira_sk_…`)
+  goes only into the server's environment (`MIRAFIVE_SECRET_KEY`), never into client code, a
+  `NEXT_PUBLIC_`/`VITE_`/`PUBLIC_` variable or a repository. The SDKs refuse the wrong key.
+- **Money** is sent only from the server: integer minor units plus an ISO 4217 currency
+  (`amount: 1999, currency: "EUR"` is 19.99 EUR), never floats.
+- **Count once:** give money an `entryId` from the payment provider (`stripe:in_123`), so the
+  Stripe connector and retries do not double it. Give business events a stable id:
+  `eventId: await eventIdFor("order:123:paid")`. The same key gives the same id in every SDK.
+- **Personal data** never goes into event names or properties. Use your own user id (not an email)
+  for `identify`; put email, name and phone in its traits, which MIRA FIVE encrypts at rest.
+- **Consent:** keep `consent: "auto"`; it follows the site's consent banner (Usercentrics,
+  Cookiebot, consentmanager, CCM19, Borlabs, any TCF 2.2 CMP, Google Consent Mode). Call
+  `consent()` only for a custom banner. Do not gate the SDK behind consent yourself: without
+  consent it is cookieless and still counts.
+- **Never block on analytics:** event methods return nothing, never throw, and batch on their
+  own. Do not `await` or `try` them. Call `flush()`/`shutdown()` only at the end of a script or a
+  serverless function.
+- **Server events and visitors:** pass the browser's `mira.anonymousId` to your server and set it
+  as `anonymousId` on server events, so a purchase joins the visit and its source.

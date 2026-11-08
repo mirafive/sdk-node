@@ -1,0 +1,18 @@
+[install]
+# Strict installs: the package sees only the dependencies it declares.
+linker = "isolated"
+# Supply-chain guard: never install a version published less than a day ago (seconds)…
+minimumReleaseAge = 86400
+# …except our own packages, which depend on each other's fresh releases.
+minimumReleaseAgeExcludes = [
+  "@mirafive/protocol",
+  "@mirafive/web",
+  "@mirafive/node",
+  "@mirafive/react",
+  "@mirafive/vue",
+  "@mirafive/astro",
+  "@mirafive/convex",
+  "@mirafive/next",
+  "@mirafive/tanstack",
+  "@mirafive/nuxt",
+]

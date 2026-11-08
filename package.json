@@ -1,84 +1,67 @@
 {
-  "name": "@mirafive/sdk-server",
-  "version": "1.0.0",
-  "description": "MIRA FIVE server SDK for JS runtimes",
+  "name": "@mirafive/node",
+  "version": "2.0.0",
+  "description": "MIRA FIVE server SDK for Node, Bun, Deno and edge runtimes: server events, revenue and touchpoints, with batching, retries and exactly-once event ids. No dependencies beyond @mirafive/protocol.",
   "keywords": [
     "analytics",
-    "cookieless",
-    "edge",
-    "gdpr",
+    "attribution",
+    "bun",
+    "deno",
+    "mira-five",
     "mirafive",
-    "privacy",
+    "node",
+    "revenue",
     "server"
   ],
-  "homepage": "https://mirafive.io",
+  "homepage": "https://github.com/mirafive/sdk-node#readme",
   "bugs": {
-    "email": "support@mirafive.io"
+    "url": "https://github.com/mirafive/sdk-node/issues"
   },
   "license": "MIT",
-  "author": "MIRA FIVE <support@mirafive.io>",
+  "author": "Cloo GmbH <hallo@mirafive.io> (https://mirafive.io)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mirafive/sdk-server.git"
+    "url": "git+https://github.com/mirafive/sdk-node.git"
   },
   "files": [
     "dist"
   ],
   "type": "module",
   "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
-    "build": "tsdown",
-    "test": "vitest run",
-    "test:runtimes": "bun run build && node test/runtimes/run.mjs",
-    "golden": "MIRAFIVE_WRITE_GOLDEN=1 vitest run test/golden.test.ts",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware --deny-warnings",
+    "build": "bun run build.ts",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run build",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "size": "size-limit",
-    "vendor:protocol": "bun scripts/vendor-protocol.ts",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run build && publint --strict && attw --pack --profile esm-only && size-limit",
-    "prepublishOnly": "bun run check"
+    "lint": "oxlint",
+    "test": "bun test",
+    "typecheck": "bun check"
+  },
+  "dependencies": {
+    "@mirafive/protocol": "^2.0.0"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.5",
-    "@size-limit/preset-small-lib": "^14.3.0",
-    "@types/node": "^26.6.5",
-    "ajv": "^8.20.0",
-    "miniflare": "^4.20260730.0",
-    "oxfmt": "^0.74.0",
-    "oxlint": "^1.89.0",
-    "oxlint-tsgolint": "^7.0.2005",
-    "publint": "^0.3.25",
-    "size-limit": "^14.3.0",
-    "tsdown": "0.23.1",
-    "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
+    "@types/bun": "^1.4.4",
+    "oxfmt": "^0.77.0",
+    "oxlint": "^1.92.0",
+    "oxlint-tsgolint": "^7.0.2006",
+    "typescript": "^7.0.2"
   },
-  "size-limit": [
-    {
-      "name": "index",
-      "path": "dist/index.js",
-      "limit": "3.62 kB",
-      "gzip": true
-    }
-  ],
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "bun@1.4.4",
-  "mirafive": {
-    "protocol": [
-      "types",
-      "limits",
-      "batch-id"
-    ]
-  }
+  "packageManager": "bun@1.4.4"
 }

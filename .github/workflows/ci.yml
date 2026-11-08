@@ -1,52 +1,18 @@
-name: CI
+name: ci
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - run: bun install --frozen-lockfile
-      - name: Format
-        run: bun run format:check
-      - name: Lint
-        run: bun run lint
-      - name: Typecheck
-        run: bun run typecheck
-      - name: Test
-        run: bun run test
-      - name: Build
-        run: bun run build
-      - name: Package (publint)
-        run: bunx publint --strict
-      - name: Types (attw)
-        run: bunx attw --pack --profile esm-only
-      - name: Size
-        run: bunx size-limit
-
-  runtimes:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - run: bun install --frozen-lockfile
-      - name: Node, Bun, Deno and workerd
-        run: bun run test:runtimes
+    # format, lint, types, tests, build, and the package as an app installs it
+    uses: mirafive/.github/.github/workflows/js-sdk.yml@d99bb0580ad7349345520d9dd4f9d49d62c3d060
