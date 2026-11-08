@@ -9,6 +9,7 @@ import {
   backoffMs,
   cleanExternalIds,
   cleanProperties,
+  DEAL_LIMITS,
   DEFAULT_HOST,
   isUuid,
   keyKind,
@@ -216,6 +217,32 @@ export interface RevenueInput extends Common {
  * contact, a redeemed code. The attribution models credit it like a visit. It needs a `userId`
  * or an `anonymousId`, and a `channel` or a `source`.
  */
+/**
+ * A deal of the project's pipeline (a case, an order, an opportunity) reached a stage, as
+ * `$deal_stage`. MIRA FIVE's pipeline reads these without any mapping. A deal needs a `userId` or
+ * an `anonymousId`.
+ */
+export interface DealStageInput extends Common {
+  /** Your id of the deal: the case, order or opportunity. At most 200 characters. */
+  dealId: string;
+  /** The stage it reached, as your system names it (`consultation_booked`). */
+  stage: string;
+  /**
+   * What the deal is expected to be worth now, in whole minor units of the project's reporting
+   * currency (`21900` is 219.00 EUR). The latest one counts. Expected value is never revenue.
+   */
+  value?: number;
+  properties?: Record<string, unknown>;
+}
+
+/** The deal will not reach the end of the pipeline, as `$deal_lost`. */
+export interface DealLostInput extends Common {
+  dealId: string;
+  /** Why, in your words or as a key (`too_expensive`). At most 200 characters. */
+  reason?: string;
+  properties?: Record<string, unknown>;
+}
+
 export interface TouchpointInput extends Common {
   kind: TouchpointKind;
   /** One of MIRA FIVE's channels. Without it, `source`, `medium` and `campaign` decide, like UTMs. */
@@ -451,6 +478,92 @@ export class Mira<Events extends EventMap = EventMap> implements AsyncDisposable
         input,
       );
     });
+  }
+
+  /**
+   * A deal reached a stage of the pipeline. Send it whenever your system moves the deal, with
+   * its current expected value if it has one.
+   *
+   * ```ts
+   * mira.dealStage({ dealId: "case_17", stage: "consultation_booked", userId: "user_42", value: 21900 });
+   * ```
+   */
+  dealStage(input: DealStageInput): void {
+    this.safely(() => {
+      const dealId = this.dealId("dealStage", input);
+      if (typeof input.stage !== "string" || !input.stage.trim()) {
+        throw new MiraError("invalid_input", "dealStage: stage is required");
+      }
+      if (input.stage.length > DEAL_LIMITS.stageLength) {
+        throw new MiraError(
+          "invalid_input",
+          `dealStage: stage has at most ${DEAL_LIMITS.stageLength} characters`,
+        );
+      }
+      if (input.value !== undefined && (!Number.isSafeInteger(input.value) || input.value < 0)) {
+        throw new MiraError(
+          "invalid_input",
+          "dealStage: value must be a whole number of minor units, 0 or more",
+        );
+      }
+      this.push(
+        {
+          type: "track",
+          event: "$deal_stage",
+          properties: {
+            ...cleanProperties(input.properties),
+            deal_id: dealId,
+            stage: input.stage,
+            ...(input.value !== undefined ? { value: input.value } : {}),
+          },
+        },
+        input,
+      );
+    });
+  }
+
+  /** A deal was lost. `reason` shows on MIRA FIVE's "Lost deals". */
+  dealLost(input: DealLostInput): void {
+    this.safely(() => {
+      const dealId = this.dealId("dealLost", input);
+      const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+      if (reason.length > DEAL_LIMITS.reasonLength) {
+        throw new MiraError(
+          "invalid_input",
+          `dealLost: reason has at most ${DEAL_LIMITS.reasonLength} characters`,
+        );
+      }
+      this.push(
+        {
+          type: "track",
+          event: "$deal_lost",
+          properties: {
+            ...cleanProperties(input.properties),
+            deal_id: dealId,
+            ...(reason ? { reason } : {}),
+          },
+        },
+        input,
+      );
+    });
+  }
+
+  /** The deal id of a deal event, checked; a deal also needs a person. */
+  private dealId(method: string, input: DealStageInput | DealLostInput): string {
+    const dealId: unknown = input?.dealId;
+    if (typeof dealId !== "string" || !dealId.trim()) {
+      throw new MiraError("invalid_input", `${method}: dealId is required`);
+    }
+    if (dealId.length > DEAL_LIMITS.idLength) {
+      throw new MiraError(
+        "invalid_input",
+        `${method}: dealId has at most ${DEAL_LIMITS.idLength} characters`,
+      );
+    }
+    if (!input.userId && !input.anonymousId) {
+      throw new MiraError("invalid_input", `${method}: a userId or an anonymousId is required`);
+    }
+    return dealId;
   }
 
   /**

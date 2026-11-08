@@ -370,3 +370,73 @@ describe("Mira (server)", () => {
     expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 });
+
+describe("deal events", () => {
+  test("dealStage sends $deal_stage with the deal, the stage and its value", async () => {
+    const fake = fakeFetch();
+    const mira = new Mira({ ...options, fetch: fake.fetch });
+    mira.dealStage({
+      dealId: "case_17",
+      stage: "consultation_booked",
+      userId: "user_42",
+      value: 21_900,
+      properties: { package: "antragsservice" },
+    });
+    await mira.shutdown();
+
+    const [event] = fake.events();
+    expect(event).toMatchObject({
+      type: "track",
+      event: "$deal_stage",
+      user_id: "user_42",
+      consent: "not_applicable",
+      properties: {
+        deal_id: "case_17",
+        stage: "consultation_booked",
+        value: 21_900,
+        package: "antragsservice",
+      },
+    });
+    expect(validateEvent(event)).toEqual([]);
+  });
+
+  test("dealLost sends $deal_lost with its reason", async () => {
+    const fake = fakeFetch();
+    const mira = new Mira({ ...options, fetch: fake.fetch });
+    mira.dealLost({ dealId: "case_18", reason: " too_expensive ", anonymousId: "anon-1" });
+    await mira.shutdown();
+
+    const [event] = fake.events();
+    expect(event).toMatchObject({
+      event: "$deal_lost",
+      anonymous_id: "anon-1",
+      properties: { deal_id: "case_18", reason: "too_expensive" },
+    });
+    expect(validateEvent(event)).toEqual([]);
+  });
+
+  test("invalid deal events are reported, never thrown and never sent", async () => {
+    const fake = fakeFetch();
+    const errors: MiraError[] = [];
+    const mira = new Mira({
+      ...options,
+      fetch: fake.fetch,
+      onError: (error) => errors.push(error),
+    });
+    mira.dealStage({ dealId: "case_1", stage: "won" });
+    mira.dealStage({ dealId: "", stage: "won", userId: "u" });
+    mira.dealStage({ dealId: "case_1", stage: " ", userId: "u" });
+    mira.dealStage({ dealId: "case_1", stage: "won", userId: "u", value: 19.99 });
+    mira.dealLost({ dealId: "case_1", userId: "u", reason: "x".repeat(201) });
+    await mira.shutdown();
+
+    expect(fake.events()).toHaveLength(0);
+    expect(errors.map((error) => error.message)).toEqual([
+      "MIRA FIVE: dealStage: a userId or an anonymousId is required",
+      "MIRA FIVE: dealStage: dealId is required",
+      "MIRA FIVE: dealStage: stage is required",
+      "MIRA FIVE: dealStage: value must be a whole number of minor units, 0 or more",
+      "MIRA FIVE: dealLost: reason has at most 200 characters",
+    ]);
+  });
+});

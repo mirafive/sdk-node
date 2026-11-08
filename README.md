@@ -141,6 +141,35 @@ mira.revenue({
 | `{ analytics: 'granted', marketing: 'granted' }` | T3      | Plus click ids, and later forwarding to ad platforms                                          |
 | `{ analytics: 'denied' \| 'unknown' }`           | T0      | No `user_id`, `anonymous_id` or `session_id`: the event counts, but is not linked to a person |
 
+## Pipeline: deal stages
+
+MIRA FIVE's Pipeline page shows how deals move through your stages, where they are lost, and
+which channels bring the deals that close. Report each move from your system; the pipeline needs no
+mapping for these events:
+
+```ts
+// A case was booked; its package is worth 219.00 EUR.
+mira.dealStage({
+  dealId: "case_17",
+  userId: "user_42",
+  stage: "consultation_booked",
+  value: 21900,
+});
+
+// Later, the customer chose a bigger package: the latest value counts, the growth is upsell.
+mira.dealStage({ dealId: "case_17", userId: "user_42", stage: "consultation_done", value: 29900 });
+
+// Or it did not work out.
+mira.dealLost({ dealId: "case_17", userId: "user_42", reason: "too_expensive" });
+```
+
+- `dealId` is your id of the deal. A person can have several deals; their second one is a returning
+  customer.
+- `stage` is your own stage name. In MIRA FIVE, Settings → Pipeline → "Set up from deal events"
+  orders the stages it has seen.
+- `value` is optional, in whole minor units of the project's reporting currency. It is an expected
+  value, never revenue: money still comes from `revenue()` or a connector.
+
 ## Options
 
 | Option            | Default                                            | Meaning                                                                                   |

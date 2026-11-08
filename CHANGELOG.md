@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.0 — 2026-11-08
+
+### Added
+
+- `dealStage({ dealId, stage, value?, userId | anonymousId })` and `dealLost({ dealId, reason? })`:
+  a deal of the project's pipeline (a case, an order, an opportunity) reached a stage or was lost,
+  as `$deal_stage` and `$deal_lost` (`@mirafive/protocol` 2.1.0). MIRA FIVE's pipeline reads them
+  without any mapping. `value` is the deal's current expected value in minor units.
+
 ## 2.0.0 — 2026-11-08
 
 A rewrite for the current MIRA FIVE platform: consent tiers, the revenue ledger, touchpoints and
