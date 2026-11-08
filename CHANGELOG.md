@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.1 — 2026-11-08
+
+### Removed
+
+- `dealStage` and `dealLost` from 2.1.0. A project's pipeline maps its own events to stages on
+  the MIRA FIVE server (Settings → Pipeline): send the events your system already has. 2.1.0 is
+  deprecated; nothing else changed.
+
+## 2.1.0 — 2026-11-08 (deprecated)
+
+- Added `dealStage` and `dealLost`; removed again in 2.1.1.
+
 ## 2.0.0 — 2026-11-08
 
 A rewrite for the current MIRA FIVE platform: consent tiers, the revenue ledger, touchpoints and
