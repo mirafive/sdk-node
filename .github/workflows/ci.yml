@@ -15,4 +15,4 @@ concurrency:
 jobs:
   check:
     # format, lint, types, tests, build, and the package as an app installs it
-    uses: mirafive/.github/.github/workflows/js-sdk.yml@8fd9aaaaa1dbe9d0abc57f6174990f39cf6973bf
+    uses: mirafive/.github/.github/workflows/js-sdk.yml@6ae9b1ce535cc43b442c79de244f74b6ee207455

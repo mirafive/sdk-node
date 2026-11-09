@@ -14,8 +14,7 @@ concurrency:
 
 jobs:
   release:
-    uses: mirafive/.github/.github/workflows/js-sdk-release.yml@8fd9aaaaa1dbe9d0abc57f6174990f39cf6973bf
+    uses: mirafive/.github/.github/workflows/js-sdk-release.yml@6ae9b1ce535cc43b442c79de244f74b6ee207455
     permissions:
       contents: write
       id-token: write
-    secrets: inherit
