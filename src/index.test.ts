@@ -208,7 +208,7 @@ describe("Mira (server)", () => {
     expect(validateEvent(code)).toEqual([]);
   });
 
-  test("revenue sends subscription payments and refunds in the wire format", async () => {
+  test("revenue sends subscription payments and refunds in the wire format, without the deprecated fee and tax", async () => {
     const fake = fakeFetch();
     const mira = new Mira({ ...options, fetch: fake.fetch });
     mira.revenue({
@@ -235,8 +235,6 @@ describe("Mira (server)", () => {
       amount: 999,
       currency: "EUR",
       entry_id: "revenuecat:txn_1",
-      fee: 150,
-      tax: 160,
       product: "premium_monthly",
       subscription: { id: "sub_1", interval_count: 1, period_start: "2026-11-01T10:00:00.000Z" },
     });
@@ -256,11 +254,10 @@ describe("Mira (server)", () => {
     expect(() => mira.track({ event: "x", timestamp: "not a date" })).not.toThrow();
     expect(() => mira.track({ event: "x", eventId: "nope" })).not.toThrow();
     expect(() => mira.identify({ userId: "" })).not.toThrow();
-    expect(() => mira.revenue({ amount: 100, currency: "EUR", fee: 1.5 })).not.toThrow();
     expect(() =>
       mira.revenue({ amount: 100, currency: "EUR", subscription: { id: "" } }),
     ).not.toThrow();
-    expect(errors).toHaveLength(7);
+    expect(errors).toHaveLength(6);
   });
 
   test("identify and track pass the wire schema, with context and consent", async () => {

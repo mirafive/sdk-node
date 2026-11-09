@@ -189,9 +189,9 @@ export interface RevenueInput extends Common {
    * `refund` (the default for a negative amount), `dispute` or `dispute_won`.
    */
   entryKind?: RevenueKind;
-  /** Processor fees or store commission, in minor units. Proceeds are amount minus fee and tax. */
+  /** @deprecated Not sent since 2.2.0: MIRA FIVE counts what the customer paid. Removed in 3.0.0. */
   fee?: number;
-  /** Tax included in `amount`, in minor units. */
+  /** @deprecated Not sent since 2.2.0: MIRA FIVE counts what the customer paid. Removed in 3.0.0. */
   tax?: number;
   /** For a refund or dispute: the `entryId` of the money it takes back. */
   refundOf?: string;
@@ -402,15 +402,6 @@ export class Mira<Events extends EventMap = EventMap> implements AsyncDisposable
       if (!/^[A-Za-z]{3}$/.test(input.currency ?? "")) {
         throw new MiraError("invalid_input", "revenue: currency must be an ISO 4217 code (EUR)");
       }
-      for (const field of ["fee", "tax"] as const) {
-        const value = input[field];
-        if (value !== undefined && !Number.isSafeInteger(value)) {
-          throw new MiraError(
-            "invalid_input",
-            `revenue: ${field} must be an integer in minor units`,
-          );
-        }
-      }
       const subscription = input.subscription;
       if (subscription !== undefined && !subscription.id) {
         throw new MiraError("invalid_input", "revenue: subscription.id is required");
@@ -425,8 +416,6 @@ export class Mira<Events extends EventMap = EventMap> implements AsyncDisposable
             currency: input.currency.toUpperCase(),
             ...(input.entryId ? { entry_id: input.entryId } : {}),
             ...(input.entryKind ? { kind: input.entryKind } : {}),
-            ...(input.fee !== undefined ? { fee: input.fee } : {}),
-            ...(input.tax !== undefined ? { tax: input.tax } : {}),
             ...(input.refundOf ? { refund_of: input.refundOf } : {}),
             ...(input.product ? { product: input.product } : {}),
             ...(subscription

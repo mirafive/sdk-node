@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.0 — 2026-11-09
+
+### Deprecated
+
+- `fee` and `tax` on `revenue()`. MIRA FIVE counts revenue as the customer paid it, VAT
+  included, so they are no longer sent or checked. Passing them still compiles and does nothing;
+  they are removed in 3.0.0.
+
+### Changed
+
+- Requires `@mirafive/protocol` 2.2.0.
+
 ## 2.1.1 — 2026-11-08
 
 ### Removed

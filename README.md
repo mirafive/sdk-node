@@ -78,17 +78,16 @@ mira.touchpoint({
   and `externalRef` (your record, `hubspot:123`). A browser or app may send `survey` only.
 
 Every `revenue` call becomes one entry in the project's revenue ledger, keyed by `entryId` (sent
-twice, it counts once). Subscriptions, fees, tax and refunds are optional fields:
+twice, it counts once). `amount` is what the customer paid, VAT included. Subscriptions and
+refunds are optional fields:
 
 ```ts
-// A subscription payment (the first one and every renewal), with store commission and VAT.
+// A subscription payment (the first one and every renewal).
 mira.revenue({
   userId: "user_42",
   amount: 999,
   currency: "EUR",
   entryId: "revenuecat:txn_1000000123",
-  fee: 150, // processor fee or store commission
-  tax: 160, // VAT included in amount
   product: "premium_monthly",
   subscription: { id: "sub_42", interval: "month" }, // pays from now for one month
 });
@@ -106,8 +105,7 @@ mira.revenue({
 
 - **`entryKind`:** `charge` (one-time, the default), `subscription_payment` (the default with
   `subscription`), `refund` (the default for a negative amount), `dispute` and `dispute_won`.
-- **Proceeds** are the amount minus `fee` and `tax`; MRR comes from subscription payments and the
-  period each pays for (`interval`, `intervalCount`, or `periodStart` and `periodEnd`).
+- **MRR** comes from subscription payments and the period each pays for (`interval`, `intervalCount`, or `periodStart` and `periodEnd`).
 - **Attribution:** a subscription payment inherits the credits of the person's acquisition (their
   first conversion, sign-up, trial or first purchase, set per project), a refund those of the
   money it takes back.
