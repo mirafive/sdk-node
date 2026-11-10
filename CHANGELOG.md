@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.1 — 2026-11-10
+
+### Fixed
+
+- `deletePerson` sends the user id exactly as given: it no longer trims it, so an id with
+  surrounding spaces erases that person and no other. Empty ids and ids over 200 characters are
+  still refused.
+- `deletePerson` keeps the user id out of its error messages, so it stays out of your logs.
+
 ## 2.3.0 — 2026-11-10
 
 ### Added

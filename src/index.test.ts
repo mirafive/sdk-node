@@ -393,7 +393,7 @@ describe("deletePerson", () => {
     const mira = new Mira({ ...options, fetch: fake.fetch });
     expect(await mira.deletePerson(" a/b@c.de ")).toEqual(proof);
     expect(fake.sent).toHaveLength(1);
-    expect(fake.sent[0]?.url).toBe("https://ingest.example/v1/persons/a%2Fb%40c.de");
+    expect(fake.sent[0]?.url).toBe("https://ingest.example/v1/persons/%20a%2Fb%40c.de%20");
     expect(fake.sent[0]?.method).toBe("DELETE");
     expect(fake.sent[0]?.headers.get("authorization")).toBe("Bearer mira_sk_test_1");
   });
@@ -435,6 +435,15 @@ describe("deletePerson", () => {
     }
   });
 
+  test("keeps the user id out of error messages", async () => {
+    const secret = "ada@example.com";
+    const fake = fakeErase(["network", Response.json({ ok: true })]);
+    const mira = new Mira({ ...options, fetch: fake.fetch });
+    const error = (await mira.deletePerson(secret, { maxRetries: 1 }).catch((e) => e)) as MiraError;
+    expect(error.message).not.toContain(secret);
+    expect(error.message).not.toContain(encodeURIComponent(secret));
+  });
+
   test("an answer that is not a MIRA FIVE proof is an error, not a success", async () => {
     const fake = fakeErase([Response.json({ ok: true }), Response.json({ ok: true })]);
     const mira = new Mira({ ...options, fetch: fake.fetch });
@@ -445,7 +454,7 @@ describe("deletePerson", () => {
   test("refuses a bad id, a public key and a disabled client without calling the ingest", async () => {
     const fake = fakeErase([]);
     const mira = new Mira({ ...options, fetch: fake.fetch });
-    for (const id of ["", "   ", "x".repeat(201)]) {
+    for (const id of ["", "x".repeat(201)]) {
       expect(await mira.deletePerson(id).catch((e) => (e as MiraError).code)).toBe("invalid_input");
     }
     const errors: MiraError[] = [];
