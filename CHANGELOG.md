@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.2 — 2026-11-10
+
+### Fixed
+
+- `deletePerson` refuses the user ids `.` and `..`, which URL clients fold out of a path, so a
+  request can never miss the person it names.
+
 ## 2.3.1 — 2026-11-10
 
 ### Fixed

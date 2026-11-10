@@ -1,6 +1,6 @@
 {
   "name": "@mirafive/node",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "MIRA FIVE server SDK for Node, Bun, Deno and edge runtimes: server events, revenue and touchpoints, with batching, retries and exactly-once event ids. No dependencies beyond @mirafive/protocol.",
   "keywords": [
     "analytics",

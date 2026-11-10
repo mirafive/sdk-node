@@ -571,6 +571,10 @@ export class Mira<Events extends EventMap = EventMap> implements AsyncDisposable
     if (typeof userId !== "string" || !userId) {
       throw new MiraError("invalid_input", "deletePerson: userId is required");
     }
+    // URL clients fold these out of a path (even as %2e), so the request would not name the person.
+    if (userId === "." || userId === "..") {
+      throw new MiraError("invalid_input", 'deletePerson: userId cannot be "." or ".."');
+    }
     // Exactly the id your events carry: never trimmed or cut, or another person would be erased.
     if (userId.length > LIMITS.idLength) {
       throw new MiraError(

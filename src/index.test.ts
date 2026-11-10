@@ -454,7 +454,7 @@ describe("deletePerson", () => {
   test("refuses a bad id, a public key and a disabled client without calling the ingest", async () => {
     const fake = fakeErase([]);
     const mira = new Mira({ ...options, fetch: fake.fetch });
-    for (const id of ["", "x".repeat(201)]) {
+    for (const id of ["", ".", "..", "x".repeat(201)]) {
       expect(await mira.deletePerson(id).catch((e) => (e as MiraError).code)).toBe("invalid_input");
     }
     const errors: MiraError[] = [];
