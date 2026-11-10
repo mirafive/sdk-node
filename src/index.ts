@@ -561,17 +561,18 @@ export class Mira<Events extends EventMap = EventMap> implements AsyncDisposable
    * so call it again after any failure. Events that name the person afterwards are refused for 30
    * days (`onError` reports them as `rejected`): stop sending them from your side.
    *
-   * `userId` is the id you send in events, as is; an id longer than 200 characters is refused,
-   * never cut, so the wrong person is never erased.
+   * `userId` is the id you send in events, exactly: it is never trimmed, and an id longer than 200
+   * characters is refused, never cut, so the wrong person is never erased.
    */
   async deletePerson(userId: string, options: DeletePersonOptions = {}): Promise<PersonErasure> {
     if (this.closed) {
       throw new MiraError("shut_down", "deletePerson: the client was shut down");
     }
-    if (typeof userId !== "string" || !userId.trim()) {
+    if (typeof userId !== "string" || !userId) {
       throw new MiraError("invalid_input", "deletePerson: userId is required");
     }
-    if (userId.trim().length > LIMITS.idLength) {
+    // Exactly the id your events carry: never trimmed or cut, or another person would be erased.
+    if (userId.length > LIMITS.idLength) {
       throw new MiraError(
         "invalid_input",
         `deletePerson: userId has more than ${LIMITS.idLength} characters`,
@@ -586,7 +587,9 @@ export class Mira<Events extends EventMap = EventMap> implements AsyncDisposable
     if (!this.enabled) {
       throw new MiraError("config", "deletePerson: the client is disabled, nothing was erased");
     }
-    const url = `${this.host}${personErasurePath(userId.trim())}`;
+    const url = `${this.host}${personErasurePath(userId)}`;
+    // The user id may be personal data: it stays out of error messages (and so out of logs).
+    const where = `${this.host}/v1/persons/:userId`;
     const maxRetries = Math.max(0, options.maxRetries ?? 2);
     for (let attempt = 0; ; attempt += 1) {
       let failure: MiraError;
@@ -608,7 +611,7 @@ export class Mira<Events extends EventMap = EventMap> implements AsyncDisposable
           if (typeof body?.request_id === "string" && body.deleted) return body as PersonErasure;
           failure = new MiraError(
             "unavailable",
-            `${url} answered HTTP ${status}, not like a MIRA FIVE ingest: is MIRAFIVE_HOST right?`,
+            `${where} answered HTTP ${status}, not like a MIRA FIVE ingest: is MIRAFIVE_HOST right?`,
             { status },
           );
         } else {
@@ -631,7 +634,7 @@ export class Mira<Events extends EventMap = EventMap> implements AsyncDisposable
           }
         }
       } catch (error) {
-        failure = new MiraError("unavailable", `cannot reach ${url}`, { cause: error });
+        failure = new MiraError("unavailable", `cannot reach ${where}`, { cause: error });
       }
       if (!failure.retryable || attempt >= maxRetries) throw failure;
       await sleep(backoffMs(attempt, wait));
