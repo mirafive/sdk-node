@@ -155,7 +155,8 @@ mira.revenue({
 
 `MiraError.code` says what happened: `config` (missing or wrong key), `invalid_input` (an event
 was not queued; the message names the field), `rejected` (the ingest refused single events),
-`dropped` (a batch was given up), `queue_full`, `shut_down`.
+`dropped` (a batch was given up), `queue_full`, `shut_down`. `deletePerson` also throws
+`rate_limited` and `unavailable` (see below).
 
 ## Checking the setup
 
@@ -165,6 +166,27 @@ await new Mira().checkConnection(); // { key: "secret" }, or a MiraError that sa
 
 It asks the ingest whether the key works (`GET /v1/check`) and sends no event, so it is safe in
 a deploy check or a health endpoint. It is the only method that throws.
+
+## Erasing a person (GDPR Art. 17)
+
+```ts
+const proof = await mira.deletePerson("user_42");
+// { request_id: "…", deleted: { events: 12, person_traits: 3, … }, revenue_kept: 1, completed_at: "…" }
+```
+
+Erases the person with the same effect as the dashboard's People page: events, devices, traits,
+ids in other systems and touchpoints. Revenue stays in the totals, without the person. `userId` is
+the id you send in events.
+
+- **Synchronous:** unlike the event methods it does not batch. It resolves with the proof or
+  rejects with a `MiraError`: `config` (missing, wrong or public key) and `invalid_input` (empty
+  id, or more than 200 characters) will not succeed on a retry; `rate_limited` and `unavailable`
+  (`error.retryable`) will, later. It retries those twice itself (`{ maxRetries }`).
+- **Idempotent:** a person nothing is stored about, or one already erased, resolves with zero
+  rows. Call it again after any failure, for example from a job with retries.
+- **Late events:** events that name the person afterwards are refused for 30 days (`onError`
+  reports them as `rejected`, reason `erased`). Stop sending them from your side.
+- Needs the secret key; `mira_pk_…` is refused. Server only.
 
 ## Typed events
 

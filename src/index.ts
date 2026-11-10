@@ -13,6 +13,7 @@ import {
   isUuid,
   keyKind,
   LIMITS,
+  personErasurePath,
   retryable,
   retryAfterMs,
   toConsent,
@@ -24,6 +25,7 @@ import {
   type ConsentInput as PurposeInput,
   type EventContext,
   type ExternalIdType,
+  type PersonErasure,
   type RevenueKind,
   type TouchpointChannel,
   type TouchpointKind,
@@ -36,6 +38,8 @@ export { eventIdFor, uuidv7 } from "@mirafive/protocol";
 export type {
   BillingInterval,
   ExternalIdType,
+  PersonErasure,
+  PersonErasureError,
   RevenueKind,
   TouchpointChannel,
   TouchpointKind,
@@ -85,6 +89,10 @@ export interface MiraOptions {
  * - `dropped`: a batch was given up after retries or refused as a whole (`status`)
  * - `queue_full`: the ingest was unreachable for long; the oldest events were dropped
  * - `shut_down`: an event arrived after `shutdown()`
+ *
+ * Only `deletePerson` throws, with `config` (the key is missing, wrong or public: do not retry),
+ * `invalid_input` (the user id is not usable: do not retry), `rate_limited` and `unavailable`
+ * (the ingest or the network failed: retry later, see `MiraError.retryable`).
  */
 export type MiraErrorCode =
   | "config"
@@ -92,7 +100,9 @@ export type MiraErrorCode =
   | "rejected"
   | "dropped"
   | "queue_full"
-  | "shut_down";
+  | "shut_down"
+  | "rate_limited"
+  | "unavailable";
 
 export class MiraError extends Error {
   override readonly name = "MiraError";
@@ -112,6 +122,17 @@ export class MiraError extends Error {
     this.status = options.status;
     this.eventIds = options.eventIds ?? [];
   }
+
+  /** Whether the same call may succeed later: a busy or unreachable ingest, not a wrong key or id. */
+  get retryable(): boolean {
+    return this.code === "rate_limited" || this.code === "unavailable";
+  }
+}
+
+/** Options of `deletePerson`. */
+export interface DeletePersonOptions {
+  /** Retries on network errors, 408, 429 and 5xx (the erasure is idempotent). Default 2. */
+  maxRetries?: number;
 }
 
 /**
@@ -527,6 +548,94 @@ export class Mira<Events extends EventMap = EventMap> implements AsyncDisposable
       `${url} answered HTTP ${response.status}, not like a MIRA FIVE ingest: is MIRAFIVE_HOST right?`,
       { status: response.status },
     );
+  }
+
+  /**
+   * Erases one person (GDPR Art. 17) with the same effect as the dashboard's People page: their
+   * events, devices, traits, ids in other systems and touchpoints. Revenue stays in the totals,
+   * without the person. Unlike the event methods this one is synchronous and throws: it resolves
+   * with the proof (`request_id`, rows `deleted` per table) once the person is gone, or rejects
+   * with a `MiraError` (see `retryable`).
+   *
+   * Idempotent: a person nothing is stored about, or one already erased, resolves with zero rows,
+   * so call it again after any failure. Events that name the person afterwards are refused for 30
+   * days (`onError` reports them as `rejected`): stop sending them from your side.
+   *
+   * `userId` is the id you send in events, as is; an id longer than 200 characters is refused,
+   * never cut, so the wrong person is never erased.
+   */
+  async deletePerson(userId: string, options: DeletePersonOptions = {}): Promise<PersonErasure> {
+    if (this.closed) {
+      throw new MiraError("shut_down", "deletePerson: the client was shut down");
+    }
+    if (typeof userId !== "string" || !userId.trim()) {
+      throw new MiraError("invalid_input", "deletePerson: userId is required");
+    }
+    if (userId.trim().length > LIMITS.idLength) {
+      throw new MiraError(
+        "invalid_input",
+        `deletePerson: userId has more than ${LIMITS.idLength} characters`,
+      );
+    }
+    if (!this.key || keyKind(this.key) === "public") {
+      throw new MiraError(
+        "config",
+        "deletePerson needs the project's secret key (mira_sk_…): set MIRAFIVE_SECRET_KEY or pass { secretKey }",
+      );
+    }
+    if (!this.enabled) {
+      throw new MiraError("config", "deletePerson: the client is disabled, nothing was erased");
+    }
+    const url = `${this.host}${personErasurePath(userId.trim())}`;
+    const maxRetries = Math.max(0, options.maxRetries ?? 2);
+    for (let attempt = 0; ; attempt += 1) {
+      let failure: MiraError;
+      let wait = 0;
+      try {
+        const response = await this.fetch(url, {
+          method: "DELETE",
+          headers: {
+            authorization: `Bearer ${this.key}`,
+            "user-agent": `${LIBRARY.name}/${LIBRARY.version}`,
+          },
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
+        const status = response.status;
+        const body = (await response.json().catch(() => undefined)) as
+          | (Partial<PersonErasure> & { error?: string })
+          | undefined;
+        if (response.ok) {
+          if (typeof body?.request_id === "string" && body.deleted) return body as PersonErasure;
+          failure = new MiraError(
+            "unavailable",
+            `${url} answered HTTP ${status}, not like a MIRA FIVE ingest: is MIRAFIVE_HOST right?`,
+            { status },
+          );
+        } else {
+          wait = retryAfterMs(response.headers.get("retry-after"));
+          const reason = body?.error ?? `HTTP ${status}`;
+          if (status === 429) {
+            failure = new MiraError("rate_limited", `erasure rate limited (${reason})`, { status });
+          } else if (retryable(status)) {
+            failure = new MiraError("unavailable", `erasure failed (${reason})`, { status });
+          } else if (status === 400) {
+            failure = new MiraError("invalid_input", `erasure refused: ${reason}`, { status });
+          } else {
+            const hint =
+              reason === "secret_key_required"
+                ? " (this is a public key)"
+                : status === 401 || status === 403
+                  ? " (check the secret key)"
+                  : "";
+            failure = new MiraError("config", `erasure refused: ${reason}${hint}`, { status });
+          }
+        }
+      } catch (error) {
+        failure = new MiraError("unavailable", `cannot reach ${url}`, { cause: error });
+      }
+      if (!failure.retryable || attempt >= maxRetries) throw failure;
+      await sleep(backoffMs(attempt, wait));
+    }
   }
 
   /** Sends everything waiting. Resolves once delivered or given up (see `onError`); never rejects. */
