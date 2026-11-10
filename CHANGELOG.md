@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.1 — 2026-11-10
+
+### Changed
+
+- Requires `@mirafive/protocol` 2.2.1.
+- Built and checked with oxfmt 0.78 and oxlint 1.93. No change to the API.
+
 ## 2.2.0 — 2026-11-09
 
 ### Deprecated
