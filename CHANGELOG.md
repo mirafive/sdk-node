@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.3.0 — 2026-11-10
+
+### Added
+
+- `deletePerson(userId)`: erases one person (GDPR Art. 17) with the secret key and resolves with
+  the proof (`request_id`, rows `deleted` per table). Synchronous: it throws a `MiraError`
+  instead of queueing. New error codes `rate_limited` and `unavailable`, and `MiraError.retryable`.
+  Idempotent, so retrying is safe.
+
+### Changed
+
+- Requires `@mirafive/protocol` 2.3.0.
+
 ## 2.2.1 — 2026-11-10
 
 ### Changed

@@ -367,3 +367,97 @@ describe("Mira (server)", () => {
     expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 });
+
+/** A fake ingest for `DELETE /v1/persons/:userId`: answers with the given responses in order. */
+function fakeErase(answers: (Response | "network")[]) {
+  const sent: { url: string; method: string; headers: Headers }[] = [];
+  const fetch = (async (url: string, init: RequestInit) => {
+    sent.push({ url, method: init.method ?? "GET", headers: new Headers(init.headers) });
+    const answer = answers.shift() ?? Response.json({ error: "none_left" }, { status: 500 });
+    if (answer === "network") throw new TypeError("fetch failed");
+    return answer;
+  }) as unknown as typeof globalThis.fetch;
+  return { fetch, sent };
+}
+
+const proof = {
+  request_id: "0192d4a8-7b1c-7e8a-9c1d-2b3e4f5a6b7c",
+  deleted: { events: 2, persons: 1 },
+  revenue_kept: 0,
+  completed_at: "2026-11-10T12:00:00.000Z",
+};
+
+describe("deletePerson", () => {
+  test("sends DELETE with the secret key and the encoded user id, and returns the proof", async () => {
+    const fake = fakeErase([Response.json(proof)]);
+    const mira = new Mira({ ...options, fetch: fake.fetch });
+    expect(await mira.deletePerson(" a/b@c.de ")).toEqual(proof);
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0]?.url).toBe("https://ingest.example/v1/persons/a%2Fb%40c.de");
+    expect(fake.sent[0]?.method).toBe("DELETE");
+    expect(fake.sent[0]?.headers.get("authorization")).toBe("Bearer mira_sk_test_1");
+  });
+
+  test("retries a busy or failing ingest, then succeeds", async () => {
+    const fake = fakeErase([
+      "network",
+      Response.json({ error: "erasure_failed" }, { status: 503, headers: { "retry-after": "0" } }),
+      Response.json(proof),
+    ]);
+    const mira = new Mira({ ...options, fetch: fake.fetch });
+    expect((await mira.deletePerson("u1")).request_id).toBe(proof.request_id);
+    expect(fake.sent).toHaveLength(3);
+  });
+
+  test("throws a retryable error once the retries are used up", async () => {
+    const fake = fakeErase([
+      Response.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": "0" } }),
+    ]);
+    const mira = new Mira({ ...options, fetch: fake.fetch });
+    const error = (await mira.deletePerson("u1", { maxRetries: 0 }).catch((e) => e)) as MiraError;
+    expect(error).toMatchObject({ name: "MiraError", code: "rate_limited", status: 429 });
+    expect(error.retryable).toBe(true);
+  });
+
+  test("maps a refused key and a refused id to errors that do not retry", async () => {
+    for (const [status, error, code] of [
+      [401, "unknown_key", "config"],
+      [403, "secret_key_required", "config"],
+      [400, "invalid_user_id", "invalid_input"],
+    ] as const) {
+      const fake = fakeErase([Response.json({ error }, { status })]);
+      const mira = new Mira({ ...options, fetch: fake.fetch });
+      const thrown = (await mira.deletePerson("u1").catch((e) => e)) as MiraError;
+      expect(thrown).toMatchObject({ code, status });
+      expect(thrown.message).toContain(error);
+      expect(thrown.retryable).toBe(false);
+      expect(fake.sent).toHaveLength(1);
+    }
+  });
+
+  test("an answer that is not a MIRA FIVE proof is an error, not a success", async () => {
+    const fake = fakeErase([Response.json({ ok: true }), Response.json({ ok: true })]);
+    const mira = new Mira({ ...options, fetch: fake.fetch });
+    const error = (await mira.deletePerson("u1", { maxRetries: 1 }).catch((e) => e)) as MiraError;
+    expect(error.code).toBe("unavailable");
+  });
+
+  test("refuses a bad id, a public key and a disabled client without calling the ingest", async () => {
+    const fake = fakeErase([]);
+    const mira = new Mira({ ...options, fetch: fake.fetch });
+    for (const id of ["", "   ", "x".repeat(201)]) {
+      expect(await mira.deletePerson(id).catch((e) => (e as MiraError).code)).toBe("invalid_input");
+    }
+    const errors: MiraError[] = [];
+    const pub = new Mira({
+      ...options,
+      secretKey: "mira_pk_test_1",
+      fetch: fake.fetch,
+      onError: (e) => errors.push(e),
+    });
+    expect(await pub.deletePerson("u1").catch((e) => (e as MiraError).code)).toBe("config");
+    const off = new Mira({ ...options, enabled: false, fetch: fake.fetch });
+    expect(await off.deletePerson("u1").catch((e) => (e as MiraError).code)).toBe("config");
+    expect(fake.sent).toHaveLength(0);
+  });
+});
